@@ -1,0 +1,178 @@
+##############################
+# This template is based of the template from AWS Cloudfromation templates repo (https://github.com/awslabs/aws-cloudformation-templates)
+# specifically :
+#   https://github.com/awslabs/aws-cloudformation-templates/blob/master/aws/services/ECS/FargateLaunchType/clusters/public-vpc.yml# 
+#
+# The variations from the template are as follows :
+#   - 1 VPC with 1 public subnet
+#   - A security group that essentially blocks all inbound connections
+#   - Tags 
+# 
+# In a typical environment, a public VPC is setup by admins. Use this template
+# only in scenario such VPC does not exist.
+#
+##############################
+
+Description: >- 
+  This stack is meant to deploy the resources related to VPC & Subnet. If there
+  is an existing VPC, please see if the existing can be adopted over this template.
+
+Parameters:
+  TAGContact:
+    Description: Name of the person who is responsible for these Resources.
+    Type: String
+    Default: "John Doe"
+  TAGEnv:
+    Description: Environment DEV/TEST/PROD
+    Type: String
+    Default: "Dev"
+
+Mappings:
+  # Hard values for the subnet masks. These masks define
+  # the range of internal IP addresses that can be assigned.
+  # The VPC can have all IP's from 10.0.0.0 to 10.0.255.255
+  # There are two subnets which cover the ranges:
+  #
+  # 11.0.0.0 - 11.0.0.255
+  # 11.0.1.0 - 11.0.1.255
+  #
+  # If you need more IP addresses (perhaps you have so many
+  # instances that you run out) then you can customize these
+  # ranges to add more
+  SubnetConfig:
+    VPC:
+      CIDR: '11.0.0.0/16'
+    PublicOne:
+      CIDR: '11.0.0.0/24'
+    PublicTwo:
+      CIDR: '11.0.1.0/24'
+
+Resources:
+  # VPC in which containers will be networked.
+  # It has two public subnets
+  # We distribute the subnets across the first two available subnets
+  # for the region, for high availability.
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: !FindInMap ['SubnetConfig', 'VPC', 'CIDR']
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [!Ref "AWS::StackName","vpc"]]
+        - Key: CFStack
+          Value: !Ref AWS::StackName
+        - Key: Contact
+          Value: !Ref TAGContact
+        - Key: Environment
+          Value: !Ref TAGEnv
+      
+        # Two public subnets, where containers can have public IP addresses
+  PublicSubnetOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+          Fn::Select:
+          - 0
+          - Fn::GetAZs: {Ref: 'AWS::Region'}
+      VpcId: !Ref 'VPC'
+      CidrBlock: !FindInMap ['SubnetConfig', 'PublicOne', 'CIDR']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [!Ref "AWS::StackName","vpc","PublicSubnetOne"]]
+        - Key: CFStack
+          Value: !Ref AWS::StackName
+        - Key: Contact
+          Value: !Ref TAGContact
+        - Key: Environment
+          Value: !Ref TAGEnv
+  PublicSubnetTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+          Fn::Select:
+          - 1
+          - Fn::GetAZs: {Ref: 'AWS::Region'}
+      VpcId: !Ref 'VPC'
+      CidrBlock: !FindInMap ['SubnetConfig', 'PublicTwo', 'CIDR']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join ["-", [!Ref "AWS::StackName","vpc","PublicSubnetTwo"]]
+        - Key: CFStack
+          Value: !Ref AWS::StackName
+        - Key: Contact
+          Value: !Ref TAGContact
+        - Key: Environment
+          Value: !Ref TAGEnv
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  GatewayAttachement:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref 'VPC'
+      InternetGatewayId: !Ref 'InternetGateway'
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachement
+    Properties:
+      RouteTableId: !Ref 'PublicRouteTable'
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref 'InternetGateway'
+  PublicSubnetOneRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetOne
+      RouteTableId: !Ref PublicRouteTable
+  PublicSubnetTwoRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetTwo
+      RouteTableId: !Ref PublicRouteTable
+  SGAllBlocked:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+        GroupDescription: All inbound traffic blocked.
+        VpcId: !Ref 'VPC'
+        SecurityGroupIngress:
+          # Allow access to ALB from anywhere on the internet
+          - CidrIp: 0.0.0.0/0
+            IpProtocol: -1
+          # - CidrIp: ::/0
+          #   IpProtocol: -1
+        Tags:
+          - Key: Name
+            Value: !Join ["-", [!Ref "AWS::StackName","vpc","SGAllBlocked"]]
+          - Key: CFStack
+            Value: !Ref AWS::StackName
+          - Key: contact
+            Value: !Ref TAGContact
+          - Key: Environment
+            Value: !Ref TAGEnv
+Outputs:
+  VPCID:
+    Description: VPC ID
+    Value: !Ref VPC
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName","vpc"]]
+  PublicSubnetOne1ID:
+    Description: Public Subnet 1 ID
+    Value: !Ref PublicSubnetOne
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName","vpc","PublicSubnetOne"]]
+  VPCDefaultSecurityGroup: 
+    Description: Default security group
+    Value: !GetAtt VPC.DefaultSecurityGroup
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName","vpc-sg-default"]]
+  VPCSGAllBlocked: 
+        Description: Security group where all ports are blocked
+        Value: !Ref SGAllBlocked
+        Export:
+          Name: !Join [":", [!Ref "AWS::StackName","vpc","SGAllBlocked"]]

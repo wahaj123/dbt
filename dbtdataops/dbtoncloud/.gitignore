@@ -1,0 +1,8 @@
+.history/*
+target
+logs
+.idea
+dbt_modules/*
+.user.yml
+setprofile*
+scartch*

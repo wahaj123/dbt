@@ -1,0 +1,159 @@
+Description: >- 
+  This stack is meant to define fargate task definition for a specific DBT transformation project,ex:dbtdataops/dbtoncloud.
+  The stack has a dependency on resources defined via stack template 'dbtonfargate.yaml'.
+
+Parameters:
+  TAGContact:
+    Description: Name of the person who is responsible for these Resources.
+    Type: String
+    Default: "John Doe"
+  TAGEnv:
+    Description: Environment DEV/TEST/PROD
+    Type: String
+    Default: "dev"
+  TAGDBTProject:
+    Description: The name of the DBT project for which this Task is defined for. ex dbtoncloud
+    Type: String 
+  PARAMECSTaskExecutionRoleArn:
+    Description: The ARN of the execution role, ECSTaskExecutionRole, as defined in the stack template 'dbtonfargate.yaml'.
+    Type: String
+  # PARAMFargateTaskRoleArn:
+  #   Description: The ARN of the fargate execution role, DPDBTFargateTaskRole, as defined in the stack template 'dbtonfargate.yaml'.
+  #   Type: String
+  PARAMDBTECRUrl:
+      Description: The dbt docker image to use for the task Container, ex 99999.dkr.ecr.us-east-2.amazonaws.com/dbtonaws-hmap-dbtdkr:latest
+      Type: String
+  PARAMS3CodeBucketUrl:
+      Description: The S3 code bucket url, CodeStageBKTId, as defined in the stack template 'dbtonfargate.yaml'.
+      Type: String
+  PARAMDPLogGroupUrl:
+    Description: The value of DPLogGroup, as reflected by output value DPLogGroupUrl in the stack template 'dbtonfargate.yaml'.
+    Type: String
+  PARAMS3CodeBucketArn:
+    Description: The ARN for the S3 code bucket url, CodeStageBKTId, as defined in the stack template 'dbtonfargate.yaml'.
+    Type: String
+  PARAMSecretsMgrSecrets:
+    Description: The snowflake secrets data which are set in resource DPSecretsMgr.
+    Type: String
+    #NoEcho: true => optionally uncomment if you prefer not show the value in the output. For the demo, we are using dummy data.
+    Default: '
+    {
+      "SNOWSQL_ACCOUNT": "",
+      "SNOWSQL_USER": "",
+      "DBT_PASSWORD": "",
+      "SNOWSQL_ROLE": "",
+      "SNOWSQL_DATABASE": "",
+      "SNOWSQL_WAREHOUSE": ""
+    }
+  '
+  
+
+Resources:
+  DPSpecificSecretsMgr:
+    Type: AWS::SecretsManager::Secret
+    Description: >-
+      Holds secrets related for connecting to Snowflake. This instance
+      is specific to the DBT datapipeline task definition.
+    Properties:
+      Name: !Join [ "/", [ !Ref "AWS::StackName" ,!Ref TAGEnv ,"SFLKConn" ,!Ref TAGDBTProject  ] ]
+      SecretString: !Ref PARAMSecretsMgrSecrets
+      Tags:
+        - Key: CFStack
+          Value: !Ref AWS::StackName
+        - Key: Contact
+          Value: !Ref TAGContact
+        - Key: Environment
+          Value: !Ref TAGEnv
+        - Key: Datapipeline
+          Value: !Ref TAGDBTProject
+  
+  DPSpecificFargateTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: >-
+        This role is used by the task container instance, which runs the dbt
+        model transformation.
+      RoleName: !Join [ "_", [ !Ref "AWS::StackName" ,!Ref TAGEnv  ,!Ref "AWS::Region" ,"DPDBTFargateTaskRole"  ] ]
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ecs.amazonaws.com
+            - ecs-tasks.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Tags:
+        - Key: CFStack
+          Value: !Ref AWS::StackName
+        - Key: contact
+          Value: !Ref TAGContact
+        - Key: Environment
+          Value: !Ref TAGEnv
+        - Key: Datapipeline
+          Value: !Ref TAGDBTProject
+      Policies:
+      - PolicyName: inline-DPDBTFargateTaskRole
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+              - 'secretsmanager:GetSecretValue'
+              - 'secretsmanager:ListSecrets'
+            Resource: !Ref DPSpecificSecretsMgr
+          - Effect: Allow
+            Action:
+              - 's3:GetObject'
+              - 's3:ListBucket'
+            Resource: 
+              - !Ref PARAMS3CodeBucketArn
+              - !Join [ "/", [ !Ref PARAMS3CodeBucketArn ,"*"  ] ]
+  
+  
+  DBTTaskDefn:
+    Type: AWS::ECS::TaskDefinition
+    Properties: 
+      Family: !Join [ "-", [ !Ref "AWS::StackName",!Ref TAGEnv ,!Ref TAGDBTProject ] ]
+      Tags:
+        - Key: CFStack
+          Value: !Ref AWS::StackName
+        - Key: Contact
+          Value: !Ref TAGContact
+        - Key: Environment
+          Value: !Ref TAGEnv
+        - Key: Datapipeline
+          Value: !Ref TAGDBTProject
+      ExecutionRoleArn: !Ref PARAMECSTaskExecutionRoleArn 
+      TaskRoleArn: !Ref DPSpecificFargateTaskRole
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ContainerDefinitions:
+        - Name: dbt_run_cnt
+          Image: !Ref "PARAMDBTECRUrl"
+          EntryPoint: 
+            - "/entrypoint.sh"
+          Environment:
+            - Name: DBT_RUN_SCRIPT
+              Value: "TO_BE_FILLED_DURING_RUN"
+            - Name: DBT_PROJECT
+              Value: !Ref TAGDBTProject
+            - Name: S3_CODE_BUCKET_DIR
+              Value: !Ref PARAMS3CodeBucketUrl                
+            - Name: SFLK_INFO
+              Value: !Ref DPSpecificSecretsMgr
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-group: !Ref PARAMDPLogGroupUrl
+              awslogs-stream-prefix: !Ref TAGDBTProject
+
+Outputs:
+  ECSTaskName:
+    Description: "The registered task name."
+    Value: !Join [ "-", [ !Ref "AWS::StackName",!Ref TAGEnv ,!Ref TAGDBTProject ] ]
+    Export:
+      Name: !Sub "${AWS::StackName}-${TAGEnv}-ECSTaskName"

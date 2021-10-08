@@ -1,0 +1,16 @@
+.history/*
+target
+build
+build/*
+logs
+.idea
+dbt_modules/*
+.user.yml
+setprofile*
+scratch
+scratch/*
+scratch/commands_DO_NOT_CHECKIN.txt
+dbtdataops/dbtoncloud/target/*
+dbtdataops/dbtoncloud/logs/*
+dbtdataops/dbtoncloud/dbt_modules/*
+param.json
